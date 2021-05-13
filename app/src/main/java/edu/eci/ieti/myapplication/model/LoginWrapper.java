@@ -1,4 +1,4 @@
-package edu.eci.ieti.myapplication.models;
+package edu.eci.ieti.myapplication.model;
 
 public class LoginWrapper {
     private String email;

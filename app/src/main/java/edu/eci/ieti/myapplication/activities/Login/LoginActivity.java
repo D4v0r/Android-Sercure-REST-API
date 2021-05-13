@@ -1,8 +1,6 @@
 package edu.eci.ieti.myapplication.activities.Login;
 
-import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -10,18 +8,17 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 
-import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import edu.eci.ieti.myapplication.R;
 import edu.eci.ieti.myapplication.activities.Main.MainActivity;
-import edu.eci.ieti.myapplication.models.LoginWrapper;
-import edu.eci.ieti.myapplication.models.Token;
-import edu.eci.ieti.myapplication.service.authService.AuthService;
+import edu.eci.ieti.myapplication.model.LoginWrapper;
+import edu.eci.ieti.myapplication.model.Token;
+import edu.eci.ieti.myapplication.service.authService.AuthClient;
+import edu.eci.ieti.myapplication.storage.TokenStorage;
+import retrofit2.Call;
 import retrofit2.Response;
-import retrofit2.Retrofit;
-import retrofit2.converter.gson.GsonConverterFactory;
 
 public class LoginActivity extends AppCompatActivity {
 
@@ -29,14 +26,16 @@ public class LoginActivity extends AppCompatActivity {
     private Button loginButton;
     private EditText emailView;
     private EditText passwordView;
+    private TokenStorage tokenStorage;
+    private final AuthClient authClient = new AuthClient();
     private final ExecutorService executorService = Executors.newFixedThreadPool( 1 );
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_login);
-
-        loginButton = (Button) findViewById(R.id.button);
+        tokenStorage = new TokenStorage(this);
+        loginButton = (Button) findViewById(R.id.logoutButton);
         emailView = (EditText) findViewById(R.id.editTextTextEmailAddress);
         passwordView = (EditText) findViewById(R.id.editTextTextPassword);
 
@@ -49,56 +48,52 @@ public class LoginActivity extends AppCompatActivity {
         passwordView.setError(null);
         String email = emailView.getText().toString();
         String password = passwordView.getText().toString();
-        View focusView = validateViews(email, password);
-        if (!(focusView == null)) focusView.requestFocus();
-        else {
-            Retrofit retrofit = new Retrofit.Builder()
-                    .baseUrl("http:/10.0.2.2:8080") //localhost for emulator
-                    .addConverterFactory(GsonConverterFactory.create())
-                    .build();
-            AuthService authService = retrofit.create(AuthService.class);
-            executorService.execute( new Runnable()
-            {
-                @Override
-                public void run()
-                {
-                    try
-                    {
-                        Response<Token> response = authService.login( new LoginWrapper( email, password) ).execute();
+        LoginWrapper loginWrapper = validateViews(email, password);
+        if(loginWrapper != null){
+            executorService.execute(authProcess(loginWrapper));
+        }
+    }
+
+    private Runnable authProcess (LoginWrapper loginWrapper){
+
+        return new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Call<Token> apiCall = authClient.getService().login(loginWrapper);
+                    Response<Token> response = apiCall.execute();
+                    if (response.isSuccessful()) {
                         Token token = response.body();
-                        runOnUiThread(() -> {
-                            if(!response.isSuccessful()){
-                                emailView.setError("Verify Your email");
-                                passwordView.setError("verify Your Password");
-                            } else {
-                                storeToken(token);
-                                Intent intent = new Intent(getApplicationContext(), MainActivity.class);
-                                startActivity(intent);
-                            }
-                        });
+                        tokenStorage.saveToken(token);
+                        startActivity(
+                                new Intent(LoginActivity.this, MainActivity.class)
+                        );
                         finish();
                     }
-                    catch ( IOException e )
-                    {
-                        e.printStackTrace();
+                    else{
+                        showInvalidDataError();
                     }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    showInvalidDataError();
                 }
-            } );
-
-
-        }
-
+            }
+        };
     }
 
-    private void storeToken(Token token) {
-        SharedPreferences sharedPref =
-                getSharedPreferences(getString(R.string.PREFERENCE_FILE_KEY), Context.MODE_PRIVATE );
-        SharedPreferences.Editor editor = sharedPref.edit();
-        editor.putString("TOKEN_KEY",token.getToken());
-        editor.commit();
+    private void showInvalidDataError(){
+
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                emailView.setError("Verify Your email!");
+                passwordView.setError("verify Your Password!");
+            }
+        });
     }
 
-    private View validateViews(String email, String password){
+    private LoginWrapper validateViews(String email, String password){
+
         View focusView = null;
         if (!isEmailValid(email)) {
             emailView.setError(getString(R.string.error_invalid_email));
@@ -116,7 +111,13 @@ public class LoginActivity extends AppCompatActivity {
             passwordView.setError(getString(R.string.error_field_required));
             focusView = emailView;
         }
-        return  focusView;
+
+        if (!(focusView == null)) {
+            focusView.requestFocus();
+            return null;
+        }
+
+        return  new LoginWrapper(email, password);
     }
 
     private boolean isEmailValid(String email) {
